@@ -4,10 +4,15 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
-
+import streamlit as st
+from datetime import date
+import yfinance as yf
+from prophet import Prophet
+from prophet.plot import plot_plotly
+from plotly import graph_objs as go
 # Set the page title
 st.set_page_config(layout="wide")
-st.title('📊 Current Stock Prices with Prediction Model')
+st.title('Current Stock Prices with Prediction Model')
 
 # Function to fetch stock data
 def get_stock_data(ticker, period):
@@ -36,8 +41,7 @@ def predict_stock_price(data):
     return predicted_price
 
 # Options for selecting the period (only for the selected ticker)
-period = st.selectbox('Select period:', ['1d', '1wk', '1mo', '3mo', '6mo', '1y', '5y', 'max'])
-
+period = st.selectbox('Select period of data:', ['1d', '1wk', '1mo', '3mo', '6mo', '1y', '5y', 'max'])
 # List of popular stocks
 popular_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NFLX']
 
@@ -102,25 +106,97 @@ if option == 'Single Stock Overview':
             arrow = '↑' if pct_change > 0 else '↓'
             st.markdown(f"Change: <span style='color:{color};'>{change:.2f} USD ({pct_change:.2f}%) {arrow}</span>", unsafe_allow_html=True)
 
-            # Predict the price for the next day
-            predicted_price = predict_stock_price(stock_data)
-            st.markdown(f"Prediction for the next day: {predicted_price:.2f} USD")
+            TODAY = date.today().strftime("%Y-%m-%d")
 
-            # Add space between charts
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.title('Stock Forecast App')
 
-            # Display the chart
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Close'))
-            fig.update_layout(title=f'{ticker} Chart for Period: {period}',
-                              xaxis_title='Date',
-                              yaxis_title='Price (USD)',
-                              height=600)
-            st.plotly_chart(fig)
+            selected_stock = ticker
 
-            # Display the historical data table
-            st.subheader('Historical Data')
-            st.dataframe(stock_data[['Open', 'High', 'Low', 'Close', 'Volume']])
+            start_year = st.slider('Select start year for prediction:', 2000, date.today().year, 2000)
+
+            # Konwersja na datę z wybranym rokiem (zachowując 01-01)
+            START = f"{start_year}-01-01"
+            n_years = st.slider('Years of prediction:', 1, 4)
+            period = n_years * 365
+
+
+            @st.cache_data
+            def load_data(ticker, START):
+                data = yf.download(ticker, START, TODAY)
+                data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]  ##
+                data.reset_index(inplace=True)
+                return data
+
+
+            data_load_state = st.text('Loading data...')
+            data = load_data(selected_stock, START)
+            data_load_state.text('Loading data... done!')
+            st.subheader('Raw data')
+            st.write(data.tail())
+
+
+            # Plot raw data
+            def plot_raw_data():
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=data['Date'], y=data['Open'], name="stock_open"))
+                fig.add_trace(go.Scatter(x=data['Date'], y=data['Close'], name="stock_close"))
+                fig.layout.update(title_text='Time Series data with Rangeslider', xaxis_rangeslider_visible=True)
+                st.plotly_chart(fig)
+
+
+            plot_raw_data()
+            st.write(f"Columns: {data.columns}")
+            # Predict forecast with Prophet.
+            df_train = data[['Date', 'Close']]
+            df_train.columns = ['ds', 'y']
+
+            m = Prophet()
+            m.fit(df_train)
+            future = m.make_future_dataframe(periods=period)
+            forecast = m.predict(future)
+
+            # Show and plot forecast
+            st.subheader('Forecast data')
+            st.write(forecast.tail())
+
+            st.write(f'Forecast plot for {n_years} years')
+            fig1 = plot_plotly(m, forecast)
+            actual_color = '#FFFFFF'
+            fig1.update_traces(
+                selector=dict(mode='markers'),
+                marker=dict(color=actual_color, size=2)
+            )
+            st.plotly_chart(fig1)
+
+            # st.write("Forecast components")
+            # fig2 = m.plot_components(forecast)
+            # st.write(fig2)
+
+            fig2 = m.plot_components(forecast)
+            fig2.patch.set_facecolor('black')
+            for ax in fig2.axes:
+                ax.set_facecolor('black')
+                ax.tick_params(axis='both', colors='white')
+                ax.set_xlabel(ax.get_xlabel(), color='white')
+                ax.set_ylabel(ax.get_ylabel(), color='white')
+
+            st.write("Forecast components")
+            st.pyplot(fig2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         except Exception as e:
             st.error(f"Error fetching data for {ticker}: {e}")
